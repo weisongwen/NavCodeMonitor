@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "/home/wws/NavCodeMonitor"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"array": "cpp",
+			"unordered_map": "cpp",
+			"vector": "cpp",
+			"initializer_list": "cpp",
+			"fstream": "cpp"
+		}
+	}
+}
