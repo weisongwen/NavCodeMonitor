@@ -57,9 +57,23 @@
 
 #include "tic_toc.h"
 
+#include <signal.h>
+
+
+using namespace std;
+
 /* save result */
 FILE* trajectory = fopen("../GraphGNSSLib/src/result/trajectory.csv", "w+");
 FILE* posError = fopen("../GraphGNSSLib/src/result/error.csv", "w+");
+bool app_stopped = false;
+void sigint_handler(int sig){
+	if(sig == SIGINT){
+		// ctrl+c退出时执行的代码
+		std::cout << "ctrl+c pressed!" << std::endl;
+		app_stopped = true;
+	}
+  }
+    
 
 class gnssSinglePointPositioning
 {
@@ -67,7 +81,7 @@ class gnssSinglePointPositioning
 
     // ros subscriber
     ros::Subscriber gnss_raw_sub;
-    ros::Publisher pub_WLS, pub_FGO;
+    ros::Publisher pub_WLS, pub_FGO, GNSS_raw_pub;
     std::queue<nlosExclusion::GNSS_Raw_ArrayConstPtr> gnss_raw_buf;
     std::map<double, nlosExclusion::GNSS_Raw_Array> gnss_raw_map;
 
@@ -83,60 +97,130 @@ class gnssSinglePointPositioning
 
     Eigen::Matrix<double, 3,1> ENU_ref;
     
-public: 
-    // from Weisong
-    struct pseudorangeFactor
-    {
-        pseudorangeFactor(std::string sat_sys, double s_g_x, double s_g_y, double s_g_z, double pseudorange, double var)
-                    :sat_sys(sat_sys),s_g_x(s_g_x), s_g_y(s_g_y), s_g_z(s_g_z), pseudorange(pseudorange),var(var){}
 
-        template <typename T>
-        bool operator()(const T* state, T* residuals) const
-        {
-            T est_pseudorange; 
-            T delta_x = pow((state[0] - s_g_x),2);
-            T delta_y = pow((state[1] - s_g_y),2);
-            T delta_z = pow((state[2] - s_g_z),2);
-            est_pseudorange = sqrt(delta_x+ delta_y + delta_z);
-            
-            if(sat_sys == "GPS") 
-            {
-                est_pseudorange = est_pseudorange - state[3];
-            }
-            
-            else if(sat_sys == "BeiDou") 
-            {
-                est_pseudorange = est_pseudorange - state[4];
-            }
-
-            residuals[0] = (est_pseudorange - T(pseudorange)) / T(var);
-
-            return true;
-        }
-
-        double s_g_x, s_g_y, s_g_z, pseudorange, var;
-        std::string sat_sys; // satellite system
-
-    };
-
+    
 public:
   gnssSinglePointPositioning()
   {
-      gnss_raw_sub = nh.subscribe("/rtk_estimator/GNSS_station", 500, &gnssSinglePointPositioning::gnss_raw_msg_callback, this); // call callback for gnss raw msg
+      gnss_raw_sub = nh.subscribe("/rtk_estimator/GNSS_data11", 500, &gnssSinglePointPositioning::gnss_raw_msg_callback, this); // call callback for gnss raw msg
 
-      optimizationThread = std::thread(&gnssSinglePointPositioning::optimization, this);
+    //   optimizationThread = std::thread(&gnssSinglePointPositioning::optimization, this);
 
       pub_WLS = nh.advertise<nav_msgs::Odometry>("WLS_spp", 100); // 
       pub_FGO = nh.advertise<nav_msgs::Odometry>("FGO_spp", 100); //  
-
-    //   ENU_ref<< 114.179000972, 22.3011535667, 0; // 20190428 data
-      ENU_ref<<-2414266.9200, 5386768.9870, 2407460.0310;
+      GNSS_raw_pub = nh.advertise<nlosExclusion::GNSS_Raw_Array>("/rtk_estimator/GNSS_data", 500);
+      ENU_ref<< 114.177707462258, 22.2999154035483, 4.89580645161292; // 20190428 data
+    //   ENU_ref<<-2414266.9200, 5386768.9870, 2407460.0310;
+      signal(SIGINT, sigint_handler);
+      getUbloxNMEASolution();
 
 
   }
   ~gnssSinglePointPositioning()
   {
-      optimizationThread.detach();
+    //   optimizationThread.detach();
+  }
+
+
+  
+    /* get the GNSS raw measurements*/
+  void getUbloxNMEASolution()
+  {
+    // while(1)
+    {
+      std::chrono::milliseconds dura(1000); // this thread sleep for any ms
+      std::this_thread::sleep_for(dura);
+      // load image list
+      FILE* NMEAFile;
+      nlosExclusion::GNSS_Raw_Array gnss_data;
+      int last_gps_sec = 270152;
+      int current_gps_sec = 270152;
+      char line[1024];
+      // std::string NMEAPath = "../ion_GNSS_2020/src/data/ublox_190331_084530.csv";
+      std::string NMEAPath = "../NavCodeMonitor/src/data/GNSSData.csv";
+      NMEAFile = std::fopen((NMEAPath).c_str() , "r");
+      if(NMEAFile == NULL){
+          printf("cannot find file: ublox NMEA File \n", NMEAPath.c_str());
+          ROS_BREAK();
+	    }
+
+      if(1)
+      {
+         while ((fscanf(NMEAFile, "%[^\n]", line)) != EOF)
+        {
+            if (app_stopped){
+			break;
+		    }
+
+          fgetc(NMEAFile);    // Reads in '\n' character and moves file
+                            // stream past delimiting character
+        //   printf("Line = %s \n", line);
+          std::stringstream ss(line); // split into three string
+          std::vector<string> result;
+          while (ss.good())
+          {
+            string substr;
+            getline(ss, substr, ',');
+            result.push_back(substr);
+            std::cout << std::setprecision(17);
+          }
+
+          nlosExclusion::GNSS_Raw sv_data;
+          sv_data.GNSS_time =strtod((result[0]).c_str(), NULL);
+          sv_data.pseudorange = strtod((result[1]).c_str(), NULL);
+          sv_data.snr = strtod((result[2]).c_str(), NULL);
+          sv_data.elevation = strtod((result[3]).c_str(), NULL);
+          sv_data.azimuth = strtod((result[4]).c_str(), NULL);
+          sv_data.err_tropo = strtod((result[5]).c_str(), NULL);
+          sv_data.err_iono = strtod((result[6]).c_str(), NULL);
+          sv_data.sat_clk_err = strtod((result[7]).c_str(), NULL);
+          sv_data.sat_pos_x = strtod((result[8]).c_str(), NULL);
+          sv_data.sat_pos_y = strtod((result[9]).c_str(), NULL);
+          sv_data.sat_pos_z = strtod((result[10]).c_str(), NULL);
+          sv_data.prn_satellites_index = strtod((result[11]).c_str(), NULL);
+          gnss_data.GNSS_Raws.push_back(sv_data);
+
+          current_gps_sec = int(sv_data.GNSS_time);
+
+          if(current_gps_sec != last_gps_sec)
+          {
+              GNSS_raw_pub.publish(gnss_data);
+              
+              last_gps_sec = current_gps_sec;
+              LOG(INFO) << "new GNSS data: " <<current_gps_sec;
+              std::chrono::milliseconds dura(1000); // this thread sleep for any ms
+              std::this_thread::sleep_for(dura);
+
+              Eigen::MatrixXd eWLSSolutionECEF = m_GNSS_Tools.WeightedLeastSquare_GPS(
+                                            m_GNSS_Tools.getAllPositions(gnss_data),
+                                            m_GNSS_Tools.getAllMeasurements(gnss_data),
+                                            gnss_data);
+            Eigen::Matrix<double ,3,1> ENU;
+            // Eigen::Matrix<double, 3,1> ENU_ref;
+            // ENU_ref<< 114.179000972, 22.3011535667, 0;
+            // ENU = m_GNSS_Tools.ecef2enu(ENU_ref, eWLSSolutionECEF);
+            std::cout<< " WLS solution -> "<< eWLSSolutionECEF<< std::endl ;
+            // std::cout << "eWLSSolutionECEF"<<eWLSSolutionECEF<<std::endl;
+
+            // nav_msgs::Odometry odometry;
+            // // odometry.header = pose_msg->header;
+            // odometry.header.frame_id = "map";
+            // odometry.child_frame_id = "map";
+            // odometry.pose.pose.position.x = ENU(0);
+            // odometry.pose.pose.position.y = ENU(1);
+            // odometry.pose.pose.position.z = ENU(2);
+            // pub_WLS.publish(odometry);
+            gnss_data.GNSS_Raws.clear();
+          }
+          
+
+          std::cout << std::setprecision(17);
+        //   m_NMEAVector[int(NMEAData_.Timestamp)] = NMEAData_;
+          // std::cout<<"m_NMEAVector.size() = "<<m_NMEAVector.size()<<std::endl;
+        }
+      }
+      std::fclose(NMEAFile);
+    }
   }
 
    /**
@@ -149,6 +233,7 @@ public:
     {
         m_gnss_raw_mux.lock();
         gnss_frame++;
+        std::cout << "get gnss data -> " <<std::endl;
         if(msg->GNSS_Raws.size())
         {
             gnss_raw_buf.push(msg); 
@@ -156,7 +241,7 @@ public:
             Eigen::MatrixXd eWLSSolutionECEF = m_GNSS_Tools.WeightedLeastSquare(
                                             m_GNSS_Tools.getAllPositions(*msg),
                                             m_GNSS_Tools.getAllMeasurements(*msg),
-                                            *msg, "LS");
+                                            *msg, "WLS");
             Eigen::Matrix<double ,3,1> ENU;
             // Eigen::Matrix<double, 3,1> ENU_ref;
             // ENU_ref<< 114.179000972, 22.3011535667, 0;
@@ -177,131 +262,6 @@ public:
 
     }
 
-    void optimization()
-    {
-        while(1)
-        {
-            // process gnss raw measurements
-            // optimize_mux.lock();
-            // std::cout << "size of gnss map  "<< gnss_raw_map.size() << std::endl;
-            if(gnss_raw_map.size())
-            {
-                TicToc optimization_time;
-                ceres::Problem problem;
-                ceres::Solver::Options options;
-                options.use_nonmonotonic_steps = true;
-                options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
-                options.trust_region_strategy_type = ceres::TrustRegionStrategyType::DOGLEG;
-                options.dogleg_type = ceres::DoglegType::SUBSPACE_DOGLEG;
-                // options.num_threads = 8;
-                options.max_num_iterations = 100;
-                ceres::Solver::Summary summary;
-                ceres::LossFunction *loss_function;
-                // loss_function = new ceres::HuberLoss(1.0);
-                loss_function = NULL;
-                
-                int length = gnss_raw_map.size();
-                double state_array[length][5]; 
-
-                std::map<double, nlosExclusion::GNSS_Raw_Array>::iterator iter;
-                iter = gnss_raw_map.begin();
-                for(int i = 0;  i < length; i++,iter++) // initialize
-                {
-                    nlosExclusion::GNSS_Raw_Array gnss_data = (iter->second);
-                    Eigen::MatrixXd eWLSSolutionECEF = m_GNSS_Tools.WeightedLeastSquare(
-                                                m_GNSS_Tools.getAllPositions(gnss_data),
-                                                m_GNSS_Tools.getAllMeasurements(gnss_data),
-                                                gnss_data, "LS");
-                    // state_array[i][0] = eWLSSolutionECEF(0);
-                    // state_array[i][1] = eWLSSolutionECEF(1);
-                    // state_array[i][2] = eWLSSolutionECEF(2);
-                    // state_array[i][3] = eWLSSolutionECEF(3);
-                    // state_array[i][4] = eWLSSolutionECEF(4);
-
-                    state_array[i][0] = 0;
-                    state_array[i][1] = 0;
-                    state_array[i][2] = 0;
-                    state_array[i][3] = 0;
-                    state_array[i][4] = 0;
-
-                    problem.AddParameterBlock(state_array[i],5);
-                }
-
-                std::map<double, nlosExclusion::GNSS_Raw_Array>::iterator iter_pr;
-                iter_pr = gnss_raw_map.begin();
-                for(int m = 0;  m < length; m++,iter_pr++) // 
-                {
-                    nlosExclusion::GNSS_Raw_Array gnss_data = (iter_pr->second);
-                    MatrixXd weight_matrix; //goGPS weighting
-                    weight_matrix = m_GNSS_Tools.cofactorMatrixCal_WLS(gnss_data, "LS"); //goGPS
-                    // std::cout << "weight_matrix-> "<<weight_matrix<<std::endl;
-                    int sv_cnt = gnss_data.GNSS_Raws.size();
-                    for(int i =0; i < sv_cnt; i++)
-                    {
-                        std::string sat_sys;
-                        double s_g_x = 0, s_g_y = 0,s_g_z = 0, var = 1;
-                        double pseudorange = 0;
-                        if(m_GNSS_Tools.PRNisGPS(gnss_data.GNSS_Raws[i].prn_satellites_index)) sat_sys = "GPS";
-                        if(m_GNSS_Tools.PRNisBeidou(gnss_data.GNSS_Raws[i].prn_satellites_index)) sat_sys = "BeiDou";
-
-                        s_g_x = gnss_data.GNSS_Raws[i].sat_pos_x;
-                        s_g_y = gnss_data.GNSS_Raws[i].sat_pos_y;
-                        s_g_z = gnss_data.GNSS_Raws[i].sat_pos_z;
-
-                        pseudorange = gnss_data.GNSS_Raws[i].pseudorange;
-                        
-                        ceres::CostFunction* ps_function = new ceres::AutoDiffCostFunction<pseudorangeFactor, 1 
-                                                                , 5>(new 
-                                                                pseudorangeFactor(sat_sys, s_g_x, s_g_y, s_g_z, pseudorange, sqrt(1/weight_matrix(i,i))));
-                        problem.AddResidualBlock(ps_function, loss_function, state_array[m]);
-                    }
-                }
-
-                ceres::Solve(options, &problem, &summary);
-                  std::cout << summary.BriefReport() << "\n";
-                //   std::cout << "state_array[i][0]"<<state_array[length-1][0]<<std::endl;
-                //   std::cout << "state_array[i][1]"<<state_array[length-1][1]<<std::endl;
-                //   std::cout << "state_array[i][2]"<<state_array[length-1][2]<<std::endl;
-                Eigen::Matrix<double ,3,1> ENU;
-                
-                Eigen::Matrix<double, 3,1> state;
-                
-                state<< state_array[length-1][0], state_array[length-1][1], state_array[length-1][2];
-                ENU = m_GNSS_Tools.ecef2enu(m_GNSS_Tools.ecef2llh(ENU_ref), state);
-                // LOG(INFO) << "ENU- FGO-> "<< std::endl<< ENU;
-
-                nav_msgs::Odometry odometry;
-                // odometry.header = pose_msg->header;
-                odometry.header.frame_id = "map";
-                odometry.child_frame_id = "map";
-                odometry.pose.pose.position.x = ENU(0);
-                odometry.pose.pose.position.y = ENU(1);
-                odometry.pose.pose.position.z = ENU(2);
-                pub_FGO.publish(odometry);
-
-                FILE* FGO_trajectory = fopen("../GraphGNSSLib/src/result/FGO_trajectory.csv", "w+");
-                fgo_path.poses.clear();
-                // for(int m = 0;  m < length; m++) // 
-                // {
-                //     state<< state_array[m][0], state_array[m][1], state_array[m][2];
-                //     ENU = m_GNSS_Tools.ecef2enu(ENU_ref, state);
-                //     fprintf(FGO_trajectory, "%d,%7.5f,%7.5f,%7.5f  \n", m, ENU(0),ENU(1),ENU(2));
-                //     fflush(FGO_trajectory);
-                //   //   FGO_trajectory->close();
-
-                    
-                // }
-
-                // std::cout << "optimization_time-> "<<optimization_time.toc()<<std::endl;
-            }
-            std::chrono::milliseconds dura(1000); // this thread sleep for 100 ms
-            std::this_thread::sleep_for(dura);
-            // gnss_raw_map.clear();
-            optimize_mux.unlock();
-            
-        }
-    }
-
 };
 
 int main(int argc, char **argv)
@@ -309,7 +269,7 @@ int main(int argc, char **argv)
     FLAGS_logtostderr = 1;  // output to console
     google::InitGoogleLogging(argv[0]); // init the google logging
     google::ParseCommandLineFlags(&argc, &argv, true); // parseCommandLineFlags 
-    ros::init(argc, argv, "spp");  
+    ros::init(argc, argv, "GNSS_SPP");  
     // ...
     gnssSinglePointPositioning gnssSinglePointPositioning;
     ros::spin();
