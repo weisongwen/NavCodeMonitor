@@ -24,7 +24,7 @@ ROS Kinetic. [ROS Installation](http://wiki.ros.org/ROS/Installation)
 
 
 ### 1.2. **Eigen**
-```
+```bash
 # CMake
 sudo apt-get install cmake
 # google-glog + gflags
@@ -37,7 +37,7 @@ sudo apt-get install libeigen3-dev
 
 ## 2. Build NavCodeMonitor
 Clone the repository and catkin_make:
-```
+```bash
 mkdir NavCodeMonitor/src
 cd ~/NavCodeMonitor/src
 git clone https://github.com/weisongwen/NavCodeMonitor.git
