@@ -23,7 +23,7 @@ Ubuntu 64-bit 16.04.
 ROS Kinetic. [ROS Installation](http://wiki.ros.org/ROS/Installation)
 
 
-### 1.2. **Eigen**
+### 1.2. **Eigen and Dependency**
 ```bash
 # CMake
 sudo apt-get install cmake
@@ -33,6 +33,8 @@ sudo apt-get install libgoogle-glog-dev
 sudo apt-get install libatlas-base-dev
 # Eigen3
 sudo apt-get install libeigen3-dev
+# Novatel msgs
+sudo apt-get install ros-kinetic-novatel-msgs
 ```
 ### 1.3. **Ceres Solver**
 Follow [Ceres Installation](http://ceres-solver.org/installation.html).
