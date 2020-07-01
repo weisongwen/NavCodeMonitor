@@ -36,7 +36,7 @@ sudo apt-get install libeigen3-dev
 # Novatel msgs
 sudo apt-get install ros-kinetic-novatel-msgs
 ```
-### 1.3. **Ceres Solver**
+### 1.3. **Ceres Solver** (Optional)
 Follow [Ceres Installation](http://ceres-solver.org/installation.html).
 
 ## 2. Build NavCodeMonitor
